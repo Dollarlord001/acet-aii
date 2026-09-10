@@ -1,134 +1,184 @@
+"use client";
+
+import { useState, FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
-const PLANS = [
-  {
-    id: "free",
-    name: "Free",
-    price: "$0",
-    blurb: "Core automation to get started",
-  },
-  {
-    id: "lite",
-    name: "Lite",
-    price: "$19",
-    blurb: "For individual professionals",
-  },
-  {
-    id: "plus",
-    name: "Plus",
-    price: "$49",
-    blurb: "Small teams",
-  },
-  {
-    id: "premium",
-    name: "Premium",
-    price: "$200",
-    blurb: "Growing businesses",
-  },
-];
+export default function SignupPage() {
+  const router = useRouter();
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-export default function SettingsPage() {
-  const paystackConfigured = Boolean(process.env.PAYSTACK_SECRET_KEY?.trim());
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+    setLoading(true);
+
+    try {
+      const supabase = createClient();
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim() || null,
+          },
+        },
+      });
+
+      if (signUpError) {
+        setError(signUpError.message);
+        setLoading(false);
+        return;
+      }
+
+      // If email confirmation is disabled, session is returned
+      if (data.session) {
+        // Bootstrap org via server action
+        await fetch("/api/auth/bootstrap", { method: "POST" });
+        router.push("/dashboard");
+        router.refresh();
+        return;
+      }
+
+      setMessage(
+        "Check your email for a confirmation link. After confirming, you can sign in."
+      );
+      setLoading(false);
+    } catch {
+      setError("Unable to create account. Please try again.");
+      setLoading(false);
+    }
+  }
 
   return (
-    <div className="max-w-3xl pb-20 lg:pb-0">
-      <div className="mb-6">
-        <h1 className="text-lg font-semibold text-slate-900 tracking-tight">
-          Settings
-        </h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Workspace, plans, and security. Credentials never leave the server.
-        </p>
-      </div>
-
-      <div className="space-y-4">
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Onboarding</h2>
-          <p className="mt-1 text-sm text-slate-500 leading-relaxed">
-            ACET AI is an agent that gets business work done. Start with your
-            company context, then connect the tools you need.
-          </p>
-          <ol className="mt-4 space-y-2 text-sm text-slate-600 list-decimal list-inside">
-            <li>Describe your business and primary goals in an agent objective</li>
-            <li>
-              <Link
-                href="/dashboard/integrations"
-                className="text-acet-600 font-medium hover:underline"
-              >
-                Connect integrations
-              </Link>{" "}
-              (research, email, calendar)
-            </li>
-            <li>Run a first workflow from the workspace</li>
-          </ol>
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3 mb-1">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Subscription
-            </h2>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-              Paystack-ready
+    <div className="min-h-screen flex flex-col bg-slate-50">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto max-w-7xl px-6 py-4 flex items-center">
+          <Link href="/" className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-acet-600 flex items-center justify-center">
+              <span className="text-white font-bold text-sm">A</span>
+            </div>
+            <span className="font-semibold text-slate-900 tracking-tight">
+              ACET AI
             </span>
-          </div>
-          <p className="text-sm text-slate-500 mb-4">
-            Plans mirror the product database. Billing uses Paystack when
-            configured — secrets stay server-side only.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {PLANS.map((p) => (
-              <div
-                key={p.id}
-                className={`rounded-lg border px-4 py-3 ${
-                  p.id === "premium"
-                    ? "border-acet-200 bg-acet-50/40"
-                    : "border-slate-100 bg-slate-50/50"
-                }`}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-900">{p.name}</p>
-                  <p className="text-sm font-medium text-slate-700">
-                    {p.price}
-                    <span className="text-xs text-slate-400 font-normal">
-                      /mo
-                    </span>
-                  </p>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{p.blurb}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 rounded-lg border border-dashed border-slate-200 px-3 py-2.5 text-xs text-slate-500">
-            {paystackConfigured
-              ? "Paystack secret is configured on the server. Checkout UI can be enabled when ready."
-              : "Paystack is not configured. Set PAYSTACK_SECRET_KEY server-side before enabling billing."}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Integrations</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Manage connection status and available capabilities.
-          </p>
-          <Link
-            href="/dashboard/integrations"
-            className="mt-3 inline-flex text-sm font-medium text-acet-600 hover:text-acet-700"
-          >
-            Open Integrations →
           </Link>
-        </section>
+        </div>
+      </header>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Security</h2>
-          <ul className="mt-2 space-y-1.5 text-sm text-slate-600 leading-relaxed">
-            <li>Service-role and payment secrets never reach the browser</li>
-            <li>Organization isolation is enforced via RLS</li>
-            <li>High-risk tools require explicit approval</li>
-            <li>The model never receives API keys or OAuth tokens</li>
-          </ul>
-        </section>
-      </div>
+      <main className="flex-1 flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-8">
+            <h1 className="text-xl font-semibold text-slate-900 tracking-tight">
+              Create account
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Start automating business workflows with ACET AI.
+            </p>
+
+            <form onSubmit={onSubmit} className="mt-8 space-y-5">
+              <div>
+                <label
+                  htmlFor="fullName"
+                  className="block text-xs font-medium text-slate-700 mb-1.5"
+                >
+                  Full name
+                </label>
+                <input
+                  id="fullName"
+                  type="text"
+                  autoComplete="name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-acet-500 focus:outline-none focus:ring-2 focus:ring-acet-500/20"
+                  placeholder="Ada Lovelace"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-xs font-medium text-slate-700 mb-1.5"
+                >
+                  Work email
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-acet-500 focus:outline-none focus:ring-2 focus:ring-acet-500/20"
+                  placeholder="you@company.com"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block text-xs font-medium text-slate-700 mb-1.5"
+                >
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-acet-500 focus:outline-none focus:ring-2 focus:ring-acet-500/20"
+                  placeholder="At least 8 characters"
+                />
+              </div>
+
+              {error && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                >
+                  {error}
+                </div>
+              )}
+
+              {message && (
+                <div
+                  role="status"
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+                >
+                  {message}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg bg-acet-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-acet-700 transition focus-ring disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loading ? "Creating account…" : "Create account"}
+              </button>
+            </form>
+
+            <p className="mt-6 text-center text-sm text-slate-500">
+              Already have an account?{" "}
+              <Link
+                href="/login"
+                className="font-medium text-acet-600 hover:text-acet-700"
+              >
+                Sign in
+              </Link>
+            </p>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
