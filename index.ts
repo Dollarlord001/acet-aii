@@ -1,138 +1,73 @@
 /**
- * Structured application errors.
- * Never leak stack traces or secrets to the client.
+ * In-memory rate limiter.
+ * Replaceable later with Redis / Upstash without changing call sites.
  */
 
-export type ErrorCode =
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "VALIDATION"
-  | "RATE_LIMITED"
-  | "INTEGRATION_NOT_CONNECTED"
-  | "APPROVAL_REQUIRED"
-  | "APPROVAL_INVALID"
-  | "TOOL_FAILED"
-  | "ORCHESTRATOR_FAILED"
-  | "TEMPORARY"
-  | "INTERNAL";
+import { rateLimited } from "@/lib/errors";
 
-export interface AppErrorPayload {
-  code: ErrorCode;
-  message: string;
-  userMessage: string;
-  retryable: boolean;
-  details?: Record<string, unknown>;
+interface Bucket {
+  count: number;
+  resetAt: number;
 }
 
-export class AppError extends Error {
-  readonly code: ErrorCode;
-  readonly userMessage: string;
-  readonly retryable: boolean;
-  readonly details?: Record<string, unknown>;
+const buckets = new Map<string, Bucket>();
 
-  constructor(payload: AppErrorPayload) {
-    super(payload.message);
-    this.name = "AppError";
-    this.code = payload.code;
-    this.userMessage = payload.userMessage;
-    this.retryable = payload.retryable;
-    this.details = payload.details;
-  }
+const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000);
+const MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX ?? 30);
 
-  toJSON() {
-    return {
-      code: this.code,
-      message: this.userMessage,
-      retryable: this.retryable,
-      details: this.details,
-    };
-  }
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetAt: number;
 }
 
-export function isAppError(err: unknown): err is AppError {
-  return err instanceof AppError;
-}
+export function checkRateLimit(
+  key: string,
+  options?: { windowMs?: number; max?: number }
+): RateLimitResult {
+  const windowMs = options?.windowMs ?? WINDOW_MS;
+  const max = options?.max ?? MAX_REQUESTS;
+  const now = Date.now();
 
-export function toUserError(err: unknown): AppErrorPayload {
-  if (isAppError(err)) {
+  let bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    buckets.set(key, bucket);
+  }
+
+  if (bucket.count >= max) {
     return {
-      code: err.code,
-      message: err.message,
-      userMessage: err.userMessage,
-      retryable: err.retryable,
-      details: err.details,
+      allowed: false,
+      remaining: 0,
+      resetAt: bucket.resetAt,
     };
   }
-  if (err instanceof Error) {
-    return {
-      code: "INTERNAL",
-      message: err.message,
-      userMessage: "Something went wrong. Please try again.",
-      retryable: true,
-    };
-  }
+
+  bucket.count += 1;
   return {
-    code: "INTERNAL",
-    message: "Unknown error",
-    userMessage: "Something went wrong. Please try again.",
-    retryable: true,
+    allowed: true,
+    remaining: Math.max(0, max - bucket.count),
+    resetAt: bucket.resetAt,
   };
 }
 
-export function unauthorized(message = "Authentication required") {
-  return new AppError({
-    code: "UNAUTHORIZED",
-    message,
-    userMessage: "Please sign in to continue.",
-    retryable: false,
-  });
+/** Throws AppError if rate limited */
+export function assertRateLimit(
+  key: string,
+  options?: { windowMs?: number; max?: number }
+): void {
+  const result = checkRateLimit(key, options);
+  if (!result.allowed) {
+    throw rateLimited(result.resetAt - Date.now());
+  }
 }
 
-export function forbidden(message = "Permission denied") {
-  return new AppError({
-    code: "FORBIDDEN",
-    message,
-    userMessage: "You do not have permission to perform this action.",
-    retryable: false,
-  });
-}
-
-export function notFound(resource = "Resource") {
-  return new AppError({
-    code: "NOT_FOUND",
-    message: `${resource} not found`,
-    userMessage: `${resource} could not be found.`,
-    retryable: false,
-  });
-}
-
-export function rateLimited(retryAfterMs?: number) {
-  return new AppError({
-    code: "RATE_LIMITED",
-    message: "Rate limit exceeded",
-    userMessage: "Too many requests. Please wait a moment and try again.",
-    retryable: true,
-    details: retryAfterMs ? { retryAfterMs } : undefined,
-  });
-}
-
-export function integrationNotConnected(provider: string) {
-  return new AppError({
-    code: "INTEGRATION_NOT_CONNECTED",
-    message: `${provider} is not connected`,
-    userMessage: `${provider} is not connected for this organization. Connect it in Settings to use this capability.`,
-    retryable: false,
-    details: { provider },
-  });
-}
-
-export function validationError(message: string, details?: Record<string, unknown>) {
-  return new AppError({
-    code: "VALIDATION",
-    message,
-    userMessage: message,
-    retryable: false,
-    details,
-  });
+// Periodic cleanup to avoid unbounded growth in long-running processes
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of buckets.entries()) {
+      if (bucket.resetAt <= now) buckets.delete(key);
+    }
+  }, 120_000).unref?.();
 }
