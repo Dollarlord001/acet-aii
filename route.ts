@@ -1,41 +1,20 @@
 import { NextResponse } from "next/server";
-import { getPublicConfigStatus } from "@/lib/config/env";
+import { createClient } from "@/lib/supabase/server";
+import { ensureUserOrganization } from "@/lib/auth/session";
 
-/**
- * Production health / configuration status.
- * Never returns secret values — only configured | not_configured | partial.
- */
-export async function GET() {
-  const status = getPublicConfigStatus();
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url);
+  const code = searchParams.get("code");
+  const next = searchParams.get("next") ?? "/dashboard";
 
-  return NextResponse.json(
-    {
-      ok: status.coreReady,
-      service: "acet-ai",
-      timestamp: new Date().toISOString(),
-      config: {
-        supabase: status.supabase,
-        gemini: status.gemini,
-        groq: status.groq,
-        apify: status.apify,
-        serper: status.serper,
-        google: status.google,
-        mcp: status.mcp,
-        paystack: status.paystack,
-      },
-      notes: {
-        google:
-          "Optional. Requires GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI after Netlify URL is known.",
-        paystack:
-          "Optional for launch. Never trust browser-only payment success.",
-        core: "Supabase public URL + anon key required for auth and dashboard.",
-      },
-    },
-    {
-      status: status.coreReady ? 200 : 503,
-      headers: {
-        "Cache-Control": "no-store",
-      },
+  if (code) {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (!error && data.user) {
+      await ensureUserOrganization(data.user.id, data.user.email);
+      return NextResponse.redirect(`${origin}${next}`);
     }
-  );
+  }
+
+  return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
 }
